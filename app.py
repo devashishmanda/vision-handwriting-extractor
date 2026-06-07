@@ -71,7 +71,7 @@ for section, items in SECTION_STRUCTURE.items():
         ALL_FLAT_COLUMNS.extend(items)
 
 st.markdown("<h1>🔐 Document Text Extractor Intelligence Hub</h1>", unsafe_allow_html=True)
-st.caption("Securely parse unstructured forms into custom segmented databases using Llama Vision.")
+st.caption("Securely parse unstructured forms into custom segmented databases using Llama Vision on Groq.")
 
 # ==============================================================================
 # 🛠️ PROCESSING PIPELINE ENGINE
@@ -100,7 +100,7 @@ def convert_to_images(uploaded_file):
 
 def normalize_extracted_values(row_data):
     for key, value in list(row_data.items()):
-        if str(value).lower() == "not found" or not value: 
+        if str(value).lower() in ["not found", "null", "none"] or not value: 
             continue
             
         val_str = str(value).strip()
@@ -118,8 +118,7 @@ def normalize_extracted_values(row_data):
 def run_regex_validation(extracted_row):
     issues = []
     for k, v in extracted_row.items():
-        # Completely skip validation if the value is "Not Found"
-        if str(v).lower() == "not found" or not v:
+        if str(v).lower() in ["not found", "null", "none"] or not v:
             continue
             
         val_str = re.sub(r'[\s\-]', '', str(v))
@@ -129,6 +128,24 @@ def run_regex_validation(extracted_row):
                 
     return "🟢 Validated" if not issues else f"⚠️ Review: {', '.join(issues)}"
 
+def find_best_match(target_field, ai_response_dict):
+    """Aggressively hunts for the target field anywhere in the AI's response."""
+    if isinstance(ai_response_dict, dict):
+        for k, v in ai_response_dict.items():
+            if target_field.lower() in k.lower():
+                if not isinstance(v, (dict, list)):
+                    return str(v)
+        for v in ai_response_dict.values():
+            result = find_best_match(target_field, v)
+            if result:
+                return result
+    elif isinstance(ai_response_dict, list):
+        for item in ai_response_dict:
+            result = find_best_match(target_field, item)
+            if result:
+                return result
+    return None
+
 def extract_hierarchical_data(img, structure):
     schema_instruction = {}
     for section, parameters in structure.items():
@@ -136,17 +153,15 @@ def extract_hierarchical_data(img, structure):
             schema_instruction[section] = {param: "Extracted value or null" for param in parameters}
 
     prompt = (
-        f"Analyze this document canvas. Extract handwriting text fields and group them into sections.\n"
+        f"Analyze this document canvas. Extract handwriting and typed text fields.\n"
         f"CRITICAL STRUCTURAL INSTRUCTIONS:\n"
         f"- Look carefully at boxed digits. Aadhaar Card No MUST contain exactly 12 numerical digits.\n"
         f"- PAN Card Numbers follow an exact 10-character alphanumeric sequence (5 letters, 4 digits, 1 letter).\n"
-        f"- Transcribe character-by-character from the form fields.\n\n"
         f"You must strictly output a valid JSON object matching this exact structural hierarchy:\n"
         f"{json.dumps(schema_instruction, indent=2)}\n"
-        f"OUTPUT ONLY JSON. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, GREETINGS, OR MARKDOWN."
+        f"OUTPUT ONLY JSON. DO NOT INCLUDE ANY CONVERSATIONAL TEXT OR MARKDOWN."
     )
 
-    # Convert Image to Base64 in memory (No saving local files)
     img.thumbnail((1600, 1600))
     buffered = BytesIO()
     img.save(buffered, format="JPEG", quality=95)
@@ -171,20 +186,15 @@ def extract_hierarchical_data(img, structure):
         )
         
         raw_output = response.choices[0].message.content
-        
-        # Robust Regex to hunt down the JSON object even if the AI is chatty
         json_match = re.search(r'\{[\s\S]*\}', raw_output)
         
         if json_match:
-            clean_json = json_match.group(0)
-            return json.loads(clean_json)
+            return json.loads(json_match.group(0))
         else:
-            st.warning("⚠️ The AI did not return a valid JSON format. Marking as Not Found.")
-            return {}
+            return {"Error": "AI did not return JSON format"}
             
     except Exception as e:
-        st.error(f"API Error: {str(e)}")
-        return {}
+        return {"Error": str(e)}
 
 # ==============================================================================
 # 📥 FILE UPLOADER & WORKSPACE
@@ -211,30 +221,25 @@ if uploaded_files:
             if not pages: 
                 continue
             
-            # Extract data using the Groq AI Vision model
             nested_json = extract_hierarchical_data(pages[0], SECTION_STRUCTURE)
             
             with left_preview:
                 st.markdown(f"### 📄 Visual Preview: {file.name}")
                 st.image(pages[0], use_container_width=True)
+                with st.expander("🛠️ Debug: See Raw AI Output"):
+                    st.json(nested_json)
                 
-            # Flatten the nested JSON into a single row
             row = {"File Name": file.name}
             for section, parameters in SECTION_STRUCTURE.items():
                 if isinstance(parameters, list):
-                    section_data = nested_json.get(section, {})
                     for field in parameters:
-                        val = section_data.get(field, "Not Found")
+                        val = nested_json.get(section, {}).get(field)
                         
-                        # Fallback fuzzy matching if exact key isn't found
-                        if val == "Not Found" or not val:
-                            for raw_k, raw_v in section_data.items():
-                                if field.lower() in raw_k.lower() or raw_k.lower() in field.lower():
-                                    val = raw_v
-                                    
-                        row[field] = val if val else "Not Found"
+                        if val is None or str(val).lower() in ["null", "none"]:
+                            val = find_best_match(field, nested_json)
+                            
+                        row[field] = val if val and str(val).strip() != "" else "Not Found"
                         
-            # Normalize and Validate
             row = normalize_extracted_values(row)
             row["Validation Report"] = run_regex_validation(row)
             flat_results_for_csv.append(row)
@@ -247,7 +252,6 @@ if uploaded_files:
             
         status_update.success(f"🎉 Processed all documents in {time.time() - start_time:.2f} seconds!")
 
-        # Export Logic
         st.markdown("---")
         df_export = pd.DataFrame(flat_results_for_csv).reindex(columns=ALL_FLAT_COLUMNS, fill_value="Not Found")
         csv_bytes = df_export.to_csv(index=False).encode('utf-8')
