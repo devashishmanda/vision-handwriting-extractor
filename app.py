@@ -5,7 +5,7 @@ import time
 import re
 import base64
 from io import BytesIO
-from PIL import Image
+from PIL import Image, ImageEnhance
 import pypdfium2 as pdfium
 from docx import Document
 import pandas as pd
@@ -62,7 +62,6 @@ try:
 except Exception:
     SECTION_STRUCTURE = default_blueprint
 
-# --- UPDATED: Using the new Llama 4 Scout Vision Model ---
 MODEL_SELECTION = st.sidebar.selectbox("Choose AI Vision Engine:", ["Llama 4 Scout Vision"])
 MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
 
@@ -72,22 +71,38 @@ for section, items in SECTION_STRUCTURE.items():
         ALL_FLAT_COLUMNS.extend(items)
 
 st.markdown("<h1>🔐 Document Text Extractor Intelligence Hub</h1>", unsafe_allow_html=True)
-st.caption("Securely parse unstructured forms into custom segmented databases using Llama 4 Vision on Groq.")
+st.caption("Securely parse unstructured forms into custom databases using Llama 4 Vision on Groq.")
 
 # ==============================================================================
 # 🛠️ PROCESSING PIPELINE ENGINE
 # ==============================================================================
+def enhance_image_for_ai(img):
+    """Boosts contrast and sharpness to help the AI read faded handwriting."""
+    # 1. Boost Contrast
+    enhancer_contrast = ImageEnhance.Contrast(img)
+    img = enhancer_contrast.enhance(1.5)
+    
+    # 2. Boost Sharpness
+    enhancer_sharpness = ImageEnhance.Sharpness(img)
+    img = enhancer_sharpness.enhance(2.0)
+    
+    return img
+
 def convert_to_images(uploaded_file):
     ext = os.path.splitext(uploaded_file.name)[1].lower()
     images = []
     try:
         if ext in ['.png', '.jpg', '.jpeg', '.webp', '.tiff']:
-            images.append(Image.open(uploaded_file).convert('RGB'))
+            raw_img = Image.open(uploaded_file).convert('RGB')
+            images.append(enhance_image_for_ai(raw_img))
+            
         elif ext == '.pdf':
             pdf = pdfium.PdfDocument(uploaded_file.read())
             page = pdf[0]
             bitmap = page.render(scale=3)
-            images.append(bitmap.to_pil().convert('RGB'))
+            raw_img = bitmap.to_pil().convert('RGB')
+            images.append(enhance_image_for_ai(raw_img))
+            
         elif ext == '.docx':
             doc = Document(uploaded_file)
             full_text = "\n".join([para.text for para in doc.paragraphs])
@@ -106,14 +121,18 @@ def normalize_extracted_values(row_data):
             
         val_str = str(value).strip()
         if "aadhaar" in key.lower():
-            clean_digits = re.sub(r'[\s\.\-]', '', val_str).replace('O', '0').replace('o', '0')
-            row_data[key] = clean_digits
+            # Forcefully extract ONLY digits, ignoring any letters/symbols the AI added
+            clean_digits = ''.join(filter(str.isdigit, val_str))
+            row_data[key] = clean_digits if clean_digits else "Not Found"
+            
         elif "pan" in key.lower() or "identification" in key.lower():
             row_data[key] = re.sub(r'[\s\-]', '', val_str).upper()
+            
         elif "date" in key.lower() or "receipt" in key.lower():
             clean_date = re.sub(r'[\s\.\-\/]', '', val_str)
             if len(clean_date) == 8 and clean_date.isdigit():
                 row_data[key] = f"{clean_date[:2]}/{clean_date[2:4]}/{clean_date[4:]}"
+                
     return row_data
 
 def run_regex_validation(extracted_row):
