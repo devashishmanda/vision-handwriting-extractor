@@ -10,6 +10,23 @@ import pypdfium2 as pdfium
 from docx import Document
 import pandas as pd
 from groq import Groq
+import easyocr
+import numpy as np
+
+reader = easyocr.Reader(
+    ['en'],
+    gpu=False
+)
+
+def extract_ocr_text(img):
+
+    results = reader.readtext(
+        np.array(img),
+        detail=0,
+        paragraph=True
+    )
+
+    return "\n".join(results)
 
 # ==============================================================================
 # 🎨 BRAND THEME LAYOUT (CSS Injection)
@@ -81,15 +98,6 @@ def enhance_image_for_ai(img):
     """Boosts contrast and heavily increases sharpness in full color."""
     # Ensure image is in RGB format (Grayscale conversion removed)
     img = img.convert('RGB')
-    
-    # 1. Boost Contrast
-    enhancer_contrast = ImageEnhance.Contrast(img)
-    img = enhancer_contrast.enhance(1.0)
-    
-    # 2. Heavily Increase Sharpness (Cranked up to 2.5)
-    enhancer_sharpness = ImageEnhance.Sharpness(img)
-    img = enhancer_sharpness.enhance(1.5)
-    
     return img
 
 def convert_to_images(uploaded_file):
@@ -101,7 +109,16 @@ def convert_to_images(uploaded_file):
             images.append(enhance_image_for_ai(raw_img))
         elif ext == '.pdf':
             pdf = pdfium.PdfDocument(uploaded_file.read())
-            page = pdf[0]
+            for i in range(len(pdf)):
+    page = pdf[i]
+
+    bitmap = page.render(scale=5)
+
+    raw_img = bitmap.to_pil().convert("RGB")
+
+    images.append(
+        enhance_image_for_ai(raw_img)
+    )
             bitmap = page.render(scale=5)
             raw_img = bitmap.to_pil().convert('RGB')
             images.append(enhance_image_for_ai(raw_img))
@@ -154,12 +171,54 @@ def run_regex_validation(extracted_row):
                 
     return "🟢 Validated" if not issues else f"⚠️ Review: {', '.join(issues)}"
 
-def find_best_match(target_field, ai_response_dict):
-    if isinstance(ai_response_dict, dict):
-        for k, v in ai_response_dict.items():
-            if target_field.lower() in k.lower():
-                if not isinstance(v, (dict, list)):
-                    return str(v)
+from difflib import SequenceMatcher
+
+def find_best_match(
+    target_field,
+    ai_response_dict
+):
+
+    best_score = 0
+    best_value = None
+
+    def search(node):
+
+        nonlocal best_score
+        nonlocal best_value
+
+        if isinstance(node,dict):
+
+            for k,v in node.items():
+
+                score = SequenceMatcher(
+                    None,
+                    target_field.lower(),
+                    k.lower()
+                ).ratio()
+
+                if (
+                    score > best_score
+                    and not isinstance(
+                        v,
+                        (dict,list)
+                    )
+                ):
+                    best_score = score
+                    best_value = v
+
+                search(v)
+
+        elif isinstance(node,list):
+
+            for item in node:
+                search(item)
+
+    search(ai_response_dict)
+
+    if best_score > 0.75:
+        return best_value
+
+    return None
         for v in ai_response_dict.values():
             result = find_best_match(target_field, v)
             if result:
@@ -177,24 +236,33 @@ def extract_hierarchical_data(img, structure):
         if isinstance(parameters, list):
             schema_instruction[section] = {param: "Extracted value or null" for param in parameters}
 
-    prompt = (
-        f"You are an expert forensic document parser running a zero-error data extraction task.\n\n"
-        f"STEP 1: VISUAL SCAN ANCHORS\n"
-        f"- Locate '8. Aadhaar Card No.:'. Focus entirely on the sequence of individual printed boxes to the right of this text.\n"
-        f"- Locate '7. Unique Identification No.:' or 'PAN:'. Focus entirely on the alphanumeric sequence inside the boxes.\n"
-        f"- Locate '16. Proposer's Permanent Residential Address'.\n\n"
-        f"STEP 2: RUTHLESS TRANSCRIPTION RULES\n"
-        f"- DO NOT assume or correct spelling. Write exactly what is written in the physical handwriting.\n"
-        f"- GEOGRAPHIC AUTOCORRECT BAN: NEVER auto-complete cities, neighborhoods, or pincodes. If the handwriting says 'Kalyan', do not assume the city of Kalyan or insert the 421301 pincode. You must extract the EXACT pincode digits written in the physical boxes.\n"
-        f"- BOX BOUNDARY GUARD: The printed vertical lines separating the boxes are NOT characters. Do not mistake a vertical box border for the number '1', number '6', letter 'I', or letter 'C'.\n"
-        f"- AADHAAR DOUBLE-COUNT: The Aadhaar field must contain EXACTLY 12 digits. Count them from left to right. Then count them from right to left. If your count exceeds 12, you have mistakenly captured a vertical box border line. Drop the artifact line.\n"
-        f"- PAN FORMAT GUARD: The PAN must be EXACTLY 10 characters (5 Letters, 4 Digits, 1 Letter). Pay meticulous attention to box strokes. Differentiate clearly between 'W' vs 'U', 'L' vs 'C', and 'I' vs box borders.\n\n"
-        f"STEP 3: EXECUTION\n"
-        f"Verify your character counts internally, then populate this exact JSON structural hierarchy strictly:\n"
-        f"{json.dumps(schema_instruction, indent=2)}\n\n"
-        f"OUTPUT REQUIREMENT:\n"
-        f"Return ONLY the raw JSON object. Do not wrap it in markdown code blocks, do not include introductory text, and do not append a conversational sign-off."
-    )
+ocr_text = extract_ocr_text(img)
+    
+    prompt = f"""
+Analyze this proposal form.
+
+Extract the requested fields exactly as written.
+
+Rules:
+- Aadhaar Card No must contain exactly 12 digits.
+- PAN Card No must contain exactly 10 characters.
+- Do not guess values.
+- Preserve spelling exactly as written.
+- If a field cannot be read, return null.
+
+Return ONLY valid JSON.
+
+OCR TEXT:
+
+{ocr_text}
+
+Use OCR text when possible.
+Use image only for unclear fields.
+
+Schema:
+
+{json.dumps(schema_instruction, indent=2)}
+"""
 
     img.thumbnail((1800, 1800)) 
     buffered = BytesIO()
@@ -205,22 +273,27 @@ def extract_hierarchical_data(img, structure):
 
     try:
         response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}
-                    ]
-                }
-            ],
-            temperature=0.0,
-            max_tokens=1024
-        )
+    model=MODEL_NAME,
+    response_format={"type": "json_object"},
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url",
+                 "image_url": {
+                     "url": f"data:image/jpeg;base64,{img_str}"
+                 }}
+            ]
+        }
+    ],
+    temperature=0,
+    max_tokens=1024
+)
         
-        raw_output = response.choices[0].message.content
-        json_match = re.search(r'\{[\s\S]*\}', raw_output)
+        return json.loads(
+    response.choices[0].message.content
+)
         if json_match:
             return json.loads(json_match.group(0))
         return {"Error": "AI did not return JSON format", "RawResponse": raw_output}
@@ -255,8 +328,44 @@ if uploaded_files:
             pages = convert_to_images(file)
             if not pages: 
                 continue
+
+
+            def merge_results(master,new):
+
+    for key,val in new.items():
+
+        if isinstance(val,dict):
+
+            if key not in master:
+                master[key]={}
+
+            merge_results(
+                master[key],
+                val
+            )
+
+        else:
+
+            if (
+                val
+                and str(val).lower()
+                not in ["null","none",""]
+            ):
+                master[key]=val
             
-            nested_json = extract_hierarchical_data(pages[0], SECTION_STRUCTURE)
+            nested_json = {}
+
+for page in pages:
+
+    page_result = extract_hierarchical_data(
+        page,
+        SECTION_STRUCTURE
+    )
+
+    merge_results(
+        nested_json,
+        page_result
+    )
             
             with left_preview:
                 st.markdown(f"### 📄 Visual Preview: {file.name}")
