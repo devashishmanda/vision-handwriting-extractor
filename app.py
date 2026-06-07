@@ -77,16 +77,20 @@ st.caption("Securely parse unstructured forms into custom databases using Llama 
 # 🛠️ PROCESSING PIPELINE ENGINE
 # ==============================================================================
 def enhance_image_for_ai(img):
-    """Boosts contrast and sharpness to help the AI read faded handwriting."""
-    # 1. Boost Contrast
+    """Converts to grayscale and boosts contrast to simulate a clean 2D scan."""
+    # 1. Convert to Grayscale to remove color noise and shadows
+    img = img.convert('L') 
+    
+    # 2. Boost Contrast (we can push this higher now that color is gone)
     enhancer_contrast = ImageEnhance.Contrast(img)
-    img = enhancer_contrast.enhance(1.5)
+    img = enhancer_contrast.enhance(2.0) 
     
-    # 2. Boost Sharpness
+    # 3. Light Sharpness (Dialed down to 1.2 so box lines don't look like '1's)
     enhancer_sharpness = ImageEnhance.Sharpness(img)
-    img = enhancer_sharpness.enhance(2.0)
+    img = enhancer_sharpness.enhance(1.2)
     
-    return img
+    # Convert back to RGB (Required format for the Groq Vision API)
+    return img.convert('RGB')
 
 def convert_to_images(uploaded_file):
     ext = os.path.splitext(uploaded_file.name)[1].lower()
@@ -175,9 +179,10 @@ def extract_hierarchical_data(img, structure):
     prompt = (
         f"Analyze this document canvas. Extract handwriting and typed text fields.\n"
         f"CRITICAL STRUCTURAL INSTRUCTIONS:\n"
-        f"- TRANSCRIBE LITERALLY. Do NOT autocorrect spelling mistakes (e.g., if it says 'PULICE', write 'PULICE').\n"
+        f"- TRANSCRIBE LITERALLY. Do NOT autocorrect spelling mistakes.\n"
+        f"- IGNORE BOX LINES: Do not mistake the vertical printed lines of the form boxes for the number '1' or the letter 'I'.\n"
         f"- Look carefully at boxed digits. Aadhaar Card No MUST contain exactly 12 numerical digits. Count them twice before outputting.\n"
-        f"- PAN Card Numbers follow an exact 10-character alphanumeric sequence (5 letters, 4 digits, 1 letter). Pay close attention to W vs U and L vs C.\n"
+        f"- PAN Card Numbers follow an exact 10-character alphanumeric sequence (5 letters, 4 digits, 1 letter).\n"
         f"You must strictly output a valid JSON object matching this exact structural hierarchy:\n"
         f"{json.dumps(schema_instruction, indent=2)}\n"
         f"OUTPUT ONLY JSON. DO NOT INCLUDE ANY CONVERSATIONAL TEXT OR MARKDOWN."
