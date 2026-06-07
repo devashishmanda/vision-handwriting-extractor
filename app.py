@@ -29,9 +29,9 @@ div[data-testid="stMetricValue"] { color: #005F73 !important; }
 st.set_page_config(page_title="Text Extractor Hub", page_icon="🔐", layout="wide")
 st.markdown(extractor_theme_css, unsafe_allow_html=True)
 
-# Require API Key to run
+# Require API Key to run securely in the cloud
 if "GROQ_API_KEY" not in st.secrets:
-    st.error("Missing GROQ_API_KEY. Please add it to your Streamlit Secrets.")
+    st.error("⚠️ Missing GROQ_API_KEY. Please add it to your Streamlit Advanced Settings -> Secrets.")
     st.stop()
 
 # ==============================================================================
@@ -95,12 +95,14 @@ def convert_to_images(uploaded_file):
             ImageDraw.Draw(img).text((20, 20), full_text[:2000], fill=(0, 0, 0))
             images.append(img)
     except Exception as e:
-        st.error(f"Error converting file: {e}")
+        st.error(f"Error converting file {uploaded_file.name}: {e}")
     return images
 
 def normalize_extracted_values(row_data):
     for key, value in list(row_data.items()):
-        if value == "Not Found" or not value: continue
+        if str(value).lower() == "not found" or not value: 
+            continue
+            
         val_str = str(value).strip()
         if "aadhaar" in key.lower():
             clean_digits = re.sub(r'[\s\.\-]', '', val_str).replace('O', '0').replace('o', '0')
@@ -116,10 +118,15 @@ def normalize_extracted_values(row_data):
 def run_regex_validation(extracted_row):
     issues = []
     for k, v in extracted_row.items():
+        # Completely skip validation if the value is "Not Found"
+        if str(v).lower() == "not found" or not v:
+            continue
+            
         val_str = re.sub(r'[\s\-]', '', str(v))
-        if "aadhaar" in k.lower() and val_str != "not found":
+        if "aadhaar" in k.lower():
             if not val_str.isdigit() or len(val_str) != 12:
                 issues.append(f"Aadhaar length error ({len(val_str)} digits)")
+                
     return "🟢 Validated" if not issues else f"⚠️ Review: {', '.join(issues)}"
 
 def extract_hierarchical_data(img, structure):
@@ -136,10 +143,10 @@ def extract_hierarchical_data(img, structure):
         f"- Transcribe character-by-character from the form fields.\n\n"
         f"You must strictly output a valid JSON object matching this exact structural hierarchy:\n"
         f"{json.dumps(schema_instruction, indent=2)}\n"
-        f"Do not include code blocks, markdown wrappers, or conversational text. Return raw JSON string only."
+        f"OUTPUT ONLY JSON. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, GREETINGS, OR MARKDOWN."
     )
 
-    # Convert Image to Base64 in memory (No local files needed)
+    # Convert Image to Base64 in memory (No saving local files)
     img.thumbnail((1600, 1600))
     buffered = BytesIO()
     img.save(buffered, format="JPEG", quality=95)
@@ -163,12 +170,18 @@ def extract_hierarchical_data(img, structure):
             max_tokens=1024
         )
         
-        # Clean potential markdown markdown wrappers from the API response
         raw_output = response.choices[0].message.content
-        if raw_output.startswith("```json"):
-            raw_output = raw_output[7:-3].strip()
         
-        return json.loads(raw_output)
+        # Robust Regex to hunt down the JSON object even if the AI is chatty
+        json_match = re.search(r'\{[\s\S]*\}', raw_output)
+        
+        if json_match:
+            clean_json = json_match.group(0)
+            return json.loads(clean_json)
+        else:
+            st.warning("⚠️ The AI did not return a valid JSON format. Marking as Not Found.")
+            return {}
+            
     except Exception as e:
         st.error(f"API Error: {str(e)}")
         return {}
@@ -194,26 +207,34 @@ if uploaded_files:
         for idx, file in enumerate(uploaded_files):
             status_update.markdown(f"<div class='status-box'>⏳ <b>Processing [{idx+1}/{len(uploaded_files)}]:</b> {file.name}</div>", unsafe_allow_html=True)
             pages = convert_to_images(file)
-            if not pages: continue
             
+            if not pages: 
+                continue
+            
+            # Extract data using the Groq AI Vision model
             nested_json = extract_hierarchical_data(pages[0], SECTION_STRUCTURE)
             
             with left_preview:
                 st.markdown(f"### 📄 Visual Preview: {file.name}")
                 st.image(pages[0], use_container_width=True)
                 
+            # Flatten the nested JSON into a single row
             row = {"File Name": file.name}
             for section, parameters in SECTION_STRUCTURE.items():
                 if isinstance(parameters, list):
                     section_data = nested_json.get(section, {})
                     for field in parameters:
                         val = section_data.get(field, "Not Found")
-                        if val == "Not Found":
+                        
+                        # Fallback fuzzy matching if exact key isn't found
+                        if val == "Not Found" or not val:
                             for raw_k, raw_v in section_data.items():
                                 if field.lower() in raw_k.lower() or raw_k.lower() in field.lower():
                                     val = raw_v
-                        row[field] = val
+                                    
+                        row[field] = val if val else "Not Found"
                         
+            # Normalize and Validate
             row = normalize_extracted_values(row)
             row["Validation Report"] = run_regex_validation(row)
             flat_results_for_csv.append(row)
@@ -225,3 +246,15 @@ if uploaded_files:
             progress_bar.progress((idx + 1) / len(uploaded_files))
             
         status_update.success(f"🎉 Processed all documents in {time.time() - start_time:.2f} seconds!")
+
+        # Export Logic
+        st.markdown("---")
+        df_export = pd.DataFrame(flat_results_for_csv).reindex(columns=ALL_FLAT_COLUMNS, fill_value="Not Found")
+        csv_bytes = df_export.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label="📥 Download Extracted Data as CSV",
+            data=csv_bytes,
+            file_name="extracted_claims_data.csv",
+            mime="text/csv",
+        )
