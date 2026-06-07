@@ -78,12 +78,19 @@ if not api_key_available:
 # 🛠️ PROCESSING PIPELINE ENGINE
 # ==============================================================================
 def enhance_image_for_ai(img):
-    img = img.convert('L')
+    """Boosts contrast and heavily increases sharpness in full color."""
+    # Ensure image is in RGB format (Grayscale conversion removed)
+    img = img.convert('RGB')
+    
+    # 1. Boost Contrast
     enhancer_contrast = ImageEnhance.Contrast(img)
     img = enhancer_contrast.enhance(2.0)
+    
+    # 2. Heavily Increase Sharpness (Cranked up to 2.5)
     enhancer_sharpness = ImageEnhance.Sharpness(img)
-    img = enhancer_sharpness.enhance(1.2)
-    return img.convert('RGB')
+    img = enhancer_sharpness.enhance(2.5)
+    
+    return img
 
 def convert_to_images(uploaded_file):
     ext = os.path.splitext(uploaded_file.name)[1].lower()
