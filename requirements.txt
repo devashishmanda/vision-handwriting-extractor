@@ -1,0 +1,6 @@
+streamlit
+pillow
+pypdfium2
+python-docx
+pandas
+groq
