@@ -84,11 +84,11 @@ def enhance_image_for_ai(img):
     
     # 1. Boost Contrast
     enhancer_contrast = ImageEnhance.Contrast(img)
-    img = enhancer_contrast.enhance(2.0)
+    img = enhancer_contrast.enhance(1.0)
     
     # 2. Heavily Increase Sharpness (Cranked up to 2.5)
     enhancer_sharpness = ImageEnhance.Sharpness(img)
-    img = enhancer_sharpness.enhance(2.5)
+    img = enhancer_sharpness.enhance(1.5)
     
     return img
 
@@ -102,7 +102,7 @@ def convert_to_images(uploaded_file):
         elif ext == '.pdf':
             pdf = pdfium.PdfDocument(uploaded_file.read())
             page = pdf[0]
-            bitmap = page.render(scale=5.2)
+            bitmap = page.render(scale=5)
             raw_img = bitmap.to_pil().convert('RGB')
             images.append(enhance_image_for_ai(raw_img))
         elif ext == '.docx':
