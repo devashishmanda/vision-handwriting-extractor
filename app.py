@@ -102,7 +102,7 @@ def convert_to_images(uploaded_file):
         elif ext == '.pdf':
             pdf = pdfium.PdfDocument(uploaded_file.read())
             page = pdf[0]
-            bitmap = page.render(scale=4.6)
+            bitmap = page.render(scale=6)
             raw_img = bitmap.to_pil().convert('RGB')
             images.append(enhance_image_for_ai(raw_img))
         elif ext == '.docx':
