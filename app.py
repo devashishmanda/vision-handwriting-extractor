@@ -156,8 +156,9 @@ def extract_hierarchical_data(img, structure):
     prompt = (
         f"Analyze this document canvas. Extract handwriting and typed text fields.\n"
         f"CRITICAL STRUCTURAL INSTRUCTIONS:\n"
-        f"- Look carefully at boxed digits. Aadhaar Card No MUST contain exactly 12 numerical digits.\n"
-        f"- PAN Card Numbers follow an exact 10-character alphanumeric sequence (5 letters, 4 digits, 1 letter).\n"
+        f"- TRANSCRIBE LITERALLY. Do NOT autocorrect spelling mistakes (e.g., if it says 'PULICE', write 'PULICE').\n"
+        f"- Look carefully at boxed digits. Aadhaar Card No MUST contain exactly 12 numerical digits. Count them twice before outputting.\n"
+        f"- PAN Card Numbers follow an exact 10-character alphanumeric sequence (5 letters, 4 digits, 1 letter). Pay close attention to W vs U and L vs C.\n"
         f"You must strictly output a valid JSON object matching this exact structural hierarchy:\n"
         f"{json.dumps(schema_instruction, indent=2)}\n"
         f"OUTPUT ONLY JSON. DO NOT INCLUDE ANY CONVERSATIONAL TEXT OR MARKDOWN."
