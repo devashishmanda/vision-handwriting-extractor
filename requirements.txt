@@ -1,6 +1,8 @@
 streamlit
-pillow
-pypdfium2
-python-docx
-pandas
 groq
+pandas
+pillow
+python-docx
+pypdfium2
+easyocr
+numpy
