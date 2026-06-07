@@ -130,10 +130,21 @@ def run_regex_validation(extracted_row):
     for k, v in extracted_row.items():
         if str(v).lower() in ["not found", "null", "none"] or not v:
             continue
+            
         val_str = re.sub(r'[\s\-]', '', str(v))
+        
+        # 1. Aadhaar Check (Exactly 12 Digits)
         if "aadhaar" in k.lower():
             if not val_str.isdigit() or len(val_str) != 12:
-                issues.append(f"Aadhaar length error ({len(val_str)} digits)")
+                issues.append(f"Aadhaar error ({len(val_str)} digits)")
+                
+        # 2. PAN Card Check (5 Letters, 4 Digits, 1 Letter)
+        elif "pan" in k.lower() or "identification" in k.lower():
+            if len(val_str) != 10:
+                issues.append(f"PAN length error ({len(val_str)} chars)")
+            elif not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]$', val_str.upper()):
+                issues.append("PAN format error")
+                
     return "🟢 Validated" if not issues else f"⚠️ Review: {', '.join(issues)}"
 
 def find_best_match(target_field, ai_response_dict):
