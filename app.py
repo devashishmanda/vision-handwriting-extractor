@@ -62,8 +62,9 @@ try:
 except Exception:
     SECTION_STRUCTURE = default_blueprint
 
-MODEL_SELECTION = st.sidebar.selectbox("Choose AI Vision Engine:", ["Llama 3.2 11B Vision", "Llama 3.2 90B Vision"])
-MODEL_NAME = "llama-3.2-11b-vision-preview" if MODEL_SELECTION == "Llama 3.2 11B Vision" else "llama-3.2-90b-vision-preview"
+# --- UPDATED: Using the new Llama 4 Scout Vision Model ---
+MODEL_SELECTION = st.sidebar.selectbox("Choose AI Vision Engine:", ["Llama 4 Scout Vision"])
+MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 ALL_FLAT_COLUMNS = ["File Name", "Validation Report"]
 for section, items in SECTION_STRUCTURE.items():
@@ -71,7 +72,7 @@ for section, items in SECTION_STRUCTURE.items():
         ALL_FLAT_COLUMNS.extend(items)
 
 st.markdown("<h1>🔐 Document Text Extractor Intelligence Hub</h1>", unsafe_allow_html=True)
-st.caption("Securely parse unstructured forms into custom segmented databases using Llama Vision on Groq.")
+st.caption("Securely parse unstructured forms into custom segmented databases using Llama 4 Vision on Groq.")
 
 # ==============================================================================
 # 🛠️ PROCESSING PIPELINE ENGINE
@@ -191,7 +192,7 @@ def extract_hierarchical_data(img, structure):
         if json_match:
             return json.loads(json_match.group(0))
         else:
-            return {"Error": "AI did not return JSON format"}
+            return {"Error": "AI did not return JSON format", "RawResponse": raw_output}
             
     except Exception as e:
         return {"Error": str(e)}
